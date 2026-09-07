@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS patients (
  history TEXT,
  current_issue TEXT,
  adaptive_questionnaire TEXT,
+ ai_summary TEXT,
  created_at TEXT NOT NULL,
  created_date TEXT NOT NULL,
  privacy_history INTEGER NOT NULL DEFAULT 1
@@ -69,6 +70,6 @@ const defaultUsers = [
 const insert = db.prepare(`INSERT OR IGNORE INTO users(username,password_hash,role,name,department) VALUES(?,?,?,?,?)`);
 for (const [u,p,r,n,d] of defaultUsers) insert.run(u,bcrypt.hashSync(p,10),r,n,d);
 
-for (const col of ['current_issue','adaptive_questionnaire']) { try { db.exec(`ALTER TABLE patients ADD COLUMN ${col} TEXT`); } catch(e) {} }
+for (const col of ['current_issue','adaptive_questionnaire','ai_summary']) { try { db.exec(`ALTER TABLE patients ADD COLUMN ${col} TEXT`); } catch(e) {} }
 
 module.exports = db;

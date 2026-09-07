@@ -33,7 +33,104 @@ function login(kind){const bg=kind==='registration'?'regbg':'docbg';app.innerHTM
 async function doLogin(kind){try{const d=await api('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('#u').value,password:$('#p').value})});if((kind==='registration'&&d.user.role!=='registration')||(kind==='doctor'&&d.user.role!=='doctor'))throw Error('Wrong dashboard for this account');token=d.token;me=d.user;localStorage.setItem('mk_token',token);localStorage.setItem('mk_user',JSON.stringify(me));kind==='registration'?regDash():docDash()}catch(e){toast(e.message)}}
 async function regDash(){try{const rows=await api('/registration/queue');app.innerHTML=`<div class="wrap"><div class="card"><h2>Registration Desk</h2><p class="muted">Registration staff can enqueue patients and see only basic queue details.</p><div class="tablewrap"><table><tr><th>Queue</th><th>Name</th><th>Contact</th><th>Department</th><th>Status</th></tr>${rows.map(r=>`<tr><td>${r.queue_no}</td><td>${r.name}</td><td>${r.contact}</td><td>${r.department}</td><td>${r.status}</td></tr>`).join('')}</table></div><div class="actions"><button onclick="regDash()">Refresh</button><button class="secondary" onclick="logout()">Logout</button></div></div></div>`}catch(e){logout();toast(e.message)}}
 async function docDash(){try{const rows=await api('/doctors/me/patients');const fs=await api('/doctors/me/followups');app.innerHTML=`<div class="wrap"><div class="card"><h2>${me.name}</h2><p class="muted">${me.department}</p><h3>Assigned Patients</h3><div class="tablewrap"><table><tr><th>Queue</th><th>Patient</th><th>Status</th><th>Action</th></tr>${rows.map(r=>`<tr><td>${r.queue_no}</td><td>${r.name}</td><td>${r.status}</td><td><button onclick="patient('${r.patient_id}')">Open File</button> <button onclick="callP(${r.id})">Call</button> <button onclick="completeP(${r.id})">Complete</button></td></tr>`).join('')}</table></div><h3>Upcoming Follow-ups</h3>${fs.map(f=>`<div class="notice"><b>${f.patient_name}</b> — ${new Date(f.followup_at).toLocaleString()} — ${f.mode}${f.meeting_link?`<br><a href="${f.meeting_link}" target="_blank">${f.meeting_link}</a>`:''}</div>`).join('')||'<p class="muted">No scheduled follow-ups.</p>'}<div class="actions"><button onclick="docDash()">Refresh</button><button class="secondary" onclick="logout()">Logout</button></div></div></div>`}catch(e){logout();toast(e.message)}}
-async function patient(id){try{const p=await api('/doctors/me/patient/'+id);app.innerHTML=`<div class="wrap"><div class="card"><button class="secondary" onclick="docDash()">← Back</button><h2>${p.name}</h2><p><b>Contact:</b> ${p.contact}<br><b>Email:</b> ${p.email||'Not provided'}<br><b>Department:</b> ${p.department}</p><h3>Medical History</h3><p>${p.history||'Not provided'}</p><h3>Documents</h3>${p.documents.map(d=>`<p>${d.original_name}</p>`).join('')||'<p class="muted">No documents uploaded.</p>'}<h3>Follow-up</h3><div class="grid"><div class="field"><label>Date & time</label><input id="fu" type="datetime-local"></div><div class="field"><label>Mode</label><select id="mode"><option>In-person</option><option>Online</option></select></div><div class="field"><label>Reminder</label><select id="rem"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="60">60 min</option></select></div></div><button onclick="follow(${p.id})">Schedule Follow-up</button></div></div>`}catch(e){toast(e.message)}}
+async function patient(id){
+  try{
+    const p=await api('/doctors/me/patient/'+id);
+    const savedAI = p.ai_summary ? (()=>{try{return JSON.parse(p.ai_summary)}catch(_){return null}})() : null;
+    app.innerHTML=`<div class="wrap"><div class="card">
+      <button class="secondary" onclick="docDash()">← Back</button>
+      <h2>${escapeHtml(p.name)}</h2>
+      <p><b>Contact:</b> ${escapeHtml(p.contact)}<br><b>Email:</b> ${escapeHtml(p.email||'Not provided')}<br><b>Department:</b> ${escapeHtml(p.department)}</p>
+
+      <h3>Medical History</h3>
+      <p>${escapeHtml(p.history||'Not provided')}</p>
+
+      <h3>Current Issue</h3>
+      <p>${escapeHtml(p.current_issue||'Not provided')}</p>
+
+      <h3>AI Doctor Summary</h3>
+      <div id="aiSummaryBox" class="notice">${savedAI ? formatAISummary(savedAI) : 'Generating summary from the patient-provided history and questionnaire...'}</div>
+      <div class="actions">
+        <button type="button" onclick="generateAISummary(${p.id})">Generate / Refresh AI Summary</button>
+      </div>
+
+      <h3>Documents</h3>
+      ${p.documents.map(d=>`<div class="actions" style="margin:8px 0">
+        <button type="button" class="secondary" onclick="openDoctorDocument(${d.id})">Open ${escapeHtml(d.original_name)}</button>
+      </div>`).join('')||'<p class="muted">No documents uploaded.</p>'}
+
+      <h3>Follow-up</h3>
+      <div class="grid">
+        <div class="field"><label>Date & time</label><input id="fu" type="datetime-local"></div>
+        <div class="field"><label>Mode</label><select id="mode"><option>In-person</option><option>Online</option></select></div>
+        <div class="field"><label>Reminder</label><select id="rem"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="60">60 min</option></select></div>
+      </div>
+      <button onclick="follow(${p.id})">Schedule Follow-up</button>
+    </div></div>`;
+
+    if(!savedAI) generateAISummary(p.id);
+  }catch(e){toast(e.message)}
+}
+
+function escapeHtml(v){
+  return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function formatAISummary(s){
+  const labels={
+    chiefComplaint:'Chief complaint',
+    historySummary:'History summary',
+    relevantSymptoms:'Relevant symptoms',
+    durationAndPattern:'Duration / pattern',
+    severityAndImpact:'Severity / impact',
+    relevantHistory:'Relevant history',
+    medicationsOrAllergies:'Medications / allergies',
+    redFlagsReported:'Reported red flags',
+    missingImportantInformation:'Missing information',
+    doctorHandoff:'Doctor handoff'
+  };
+  return Object.entries(labels).map(([k,label])=>{
+    const v=s?.[k];
+    return `<p><b>${label}:</b> ${escapeHtml(v||'Not provided')}</p>`;
+  }).join('');
+}
+
+async function generateAISummary(id){
+  const box=$('#aiSummaryBox');
+  if(box) box.innerHTML='Generating summary...';
+  try{
+    const d=await api('/doctors/patient/'+id+'/ai-summary',{method:'POST'});
+    if(box){
+      box.innerHTML=(d.fallback?'⚠️ AI API is not configured. Showing a patient-information summary.<br><br>':'✓ AI summary<br><br>')+formatAISummary(d.summary);
+    }
+  }catch(e){
+    if(box) box.innerHTML='Could not generate AI summary: '+escapeHtml(e.message);
+    toast(e.message);
+  }
+}
+
+async function openDoctorDocument(id){
+  try{
+    const r=await fetch('/api/doctors/documents/'+encodeURIComponent(id),{
+      headers:{Authorization:'Bearer '+token}
+    });
+    if(!r.ok){
+      const d=await r.json().catch(()=>({}));
+      throw Error(d.error||'Could not open document');
+    }
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    const w=window.open(url,'_blank');
+    if(!w){
+      const a=document.createElement('a');
+      a.href=url;
+      a.download='document';
+      a.click();
+    }
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  }catch(e){toast(e.message)}
+}
+
 async function follow(id){try{const d=await api('/doctors/followups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({patientId:id,followupAt:$('#fu').value,mode:$('#mode').value,reminderMinutes:$('#rem').value})});toast(d.meetingLink?'Online follow-up scheduled':'Follow-up scheduled');docDash()}catch(e){toast(e.message)}}
 async function callP(id){try{await api('/doctors/queue/'+id+'/call',{method:'POST'});docDash()}catch(e){toast(e.message)}}async function completeP(id){try{await api('/doctors/queue/'+id+'/complete',{method:'POST'});docDash()}catch(e){toast(e.message)}}
 function logout(){token=null;me=null;localStorage.removeItem('mk_token');localStorage.removeItem('mk_user');home()}

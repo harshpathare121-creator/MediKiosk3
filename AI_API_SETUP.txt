@@ -1,20 +1,29 @@
-MediKiosk AI Summary API
+MediKiosk AI Summary + Document Fix
 
-UI is unchanged. Added ai-summary.js and POST /api/ai/summarize-history.
+This version fixes two doctor-dashboard problems:
 
-Request JSON:
-{
-  "previousHistory": "...",
-  "currentIssue": "...",
-  "adaptiveQuestionnaire": "...",
-  "patientContext": {}
-}
+1. Uploaded images/documents can now be opened:
+   - The browser sends the doctor's JWT Authorization header.
+   - The server verifies that the doctor is assigned to the patient.
+   - The file is returned securely and opened in a new tab.
+   - No public /uploads route is exposed.
 
-Server environment variables:
-AI_API_KEY=your_provider_key
-AI_MODEL=gpt-4o-mini
-AI_API_BASE_URL=https://api.openai.com
+2. AI doctor summary:
+   - Doctor opens a patient file.
+   - A summary is generated automatically.
+   - The doctor can press Generate / Refresh AI Summary.
+   - The summary uses only patient-provided previous history, current issue, and adaptive questionnaire.
+   - The generated summary is saved in SQLite.
 
-The browser must never contain a real provider secret. Keep the API key on the server.
-The endpoint is designed for documentation summarization, not diagnosis or prescribing.
-For real medical deployment, add consent, HTTPS, access controls, audit logging, encryption, retention rules and applicable Indian privacy/health-data compliance.
+Render environment variables:
+  AI_API_KEY=your_provider_key
+  AI_MODEL=gpt-4o-mini
+  AI_API_BASE_URL=https://api.openai.com
+
+Use an OpenAI-compatible provider by changing AI_API_BASE_URL and AI_MODEL.
+
+IMPORTANT:
+- Never put the real API key in GitHub or frontend JavaScript.
+- This is a clinical documentation aid, not a diagnostic or prescribing system.
+- Real deployment requires HTTPS, consent, encryption, access controls, audit logging,
+  retention controls, and applicable Indian privacy/health-data compliance.

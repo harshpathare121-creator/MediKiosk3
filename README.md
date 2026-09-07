@@ -22,3 +22,7 @@ Then open `http://localhost:3000`.
 The questionnaire is adaptive: the follow-up questions change based on the patient's main/current problem and the answers are stored as a structured summary for the doctor.
 
 This is a prototype. Do not use real patient medical data in production without appropriate security, privacy, compliance, encryption, audit logging and secure secrets/storage.
+
+
+## v7 fixes
+Doctor document opening now uses authenticated blob requests, and the doctor file view includes automatic AI summary generation. See `AI_API_SETUP.txt`.

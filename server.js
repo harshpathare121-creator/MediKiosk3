@@ -113,59 +113,152 @@ app.get('/api/doctors/me/followups',auth,role('doctor'),(req,res)=>res.json(db.p
 
 app.get('*',(req,res)=>res.sendFile(path.join(ROOT,'index.html')));
 app.use((err,req,res,next)=>{console.error(err);res.status(400).json({error:err.message||'Request failed'});});
-app.listen(PORT,()=>console.log(`MediKiosk running at http://localhost:${PORT}`));
 
-// ---------- AI SUMMARY API (server-side, UI unchanged) ----------
-function buildAISummaryPrompt(body) {
-  const previousHistory = String(body.previousHistory || '').slice(0, 12000);
-  const currentIssue = String(body.currentIssue || '').slice(0, 4000);
-  const adaptive = String(body.adaptiveQuestionnaire || '').slice(0, 12000);
-  const context = JSON.stringify(body.patientContext || {}).slice(0, 4000);
+
+// ---------- AI SUMMARY ----------
+function buildAISummaryPrompt(patient) {
+  const previousHistory = String(patient.history || '').slice(0, 12000);
+  const currentIssue = String(patient.current_issue || '').slice(0, 4000);
+  const adaptive = String(patient.adaptive_questionnaire || '').slice(0, 12000);
+
   return [
-    'You are a clinical documentation assistant for an OPD workflow.',
-    'Create a concise, neutral summary for a doctor from only the patient-provided information.',
-    'Do not diagnose, prescribe, infer unsupported facts, or invent missing information.',
-    'Clearly distinguish reported information from unknown/missing information.',
-    'Return valid JSON with keys: chiefComplaint, historySummary, relevantSymptoms, durationAndPattern, severityAndImpact, relevantHistory, medicationsOrAllergies, redFlagsReported, missingImportantInformation, doctorHandoff.',
-    '', 'Previous medical history:', previousHistory || '(not provided)',
-    '', 'Current issue:', currentIssue || '(not provided)',
-    '', 'Adaptive questionnaire:', adaptive || '(not provided)',
-    '', 'Patient context:', context || '{}'
+    'You are a clinical documentation assistant for a hospital OPD workflow.',
+    'Summarize only information explicitly provided by the patient.',
+    'Do not diagnose, prescribe, or invent facts.',
+    'Keep the output concise and useful for a doctor handoff.',
+    'If information is missing, say it is not provided.',
+    'Return ONLY valid JSON with these keys:',
+    'chiefComplaint, historySummary, relevantSymptoms, durationAndPattern, severityAndImpact, relevantHistory, medicationsOrAllergies, redFlagsReported, missingImportantInformation, doctorHandoff',
+    '',
+    'Previous medical history:',
+    previousHistory || '(not provided)',
+    '',
+    'Current issue:',
+    currentIssue || '(not provided)',
+    '',
+    'Adaptive questionnaire answers:',
+    adaptive || '(not provided)'
   ].join('\n');
+}
+
+function localSummary(patient) {
+  return {
+    chiefComplaint: patient.current_issue || 'Not provided',
+    historySummary: patient.history || 'No previous medical history provided.',
+    relevantSymptoms: patient.adaptive_questionnaire || 'No adaptive questionnaire details provided.',
+    durationAndPattern: 'See patient-provided questionnaire details.',
+    severityAndImpact: 'See patient-provided questionnaire details.',
+    relevantHistory: patient.history || 'Not provided',
+    medicationsOrAllergies: 'Not provided',
+    redFlagsReported: 'Not independently assessed; only patient-provided information is summarized.',
+    missingImportantInformation: 'AI provider not configured, so a full AI summary was not generated.',
+    doctorHandoff: 'Review the patient-reported history, current issue and questionnaire before clinical assessment.'
+  };
 }
 
 function callAIProvider(prompt, callback) {
   const apiKey = process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '';
   const baseUrl = process.env.AI_API_BASE_URL || 'https://api.openai.com';
   const model = process.env.AI_MODEL || 'gpt-4o-mini';
-  if (!apiKey) return callback(null, {configured:false, summary:null, message:'AI API is not configured. Set AI_API_KEY on the server.'});
-  let u; try { u = new URL('/v1/chat/completions', baseUrl); } catch(e) { return callback(new Error('Invalid AI_API_BASE_URL')); }
+
+  if (!apiKey) return callback(null, {
+    configured: false,
+    model,
+    summary: null,
+    message: 'AI API is not configured. Add AI_API_KEY in Render Environment Variables.'
+  });
+
+  let u;
+  try { u = new URL('/v1/chat/completions', baseUrl); }
+  catch (_) { return callback(new Error('Invalid AI_API_BASE_URL')); }
+
   const payload = JSON.stringify({
-    model, temperature:0.1, response_format:{type:'json_object'},
-    messages:[
-      {role:'system',content:'You produce safe, factual clinical documentation summaries only.'},
-      {role:'user',content:prompt}
+    model,
+    temperature: 0.1,
+    response_format: {type:'json_object'},
+    messages: [
+      {role:'system', content:'You are a safe clinical documentation summarizer. Do not diagnose or prescribe.'},
+      {role:'user', content:prompt}
     ]
   });
+
   const https = require('https');
-  const req = https.request({hostname:u.hostname, port:u.port||443, path:u.pathname, method:'POST',
-    headers:{Authorization:'Bearer '+apiKey,'Content-Type':'application/json','Content-Length':Buffer.byteLength(payload)}}, r=>{
-      let raw=''; r.on('data',c=>raw+=c); r.on('end',()=>{
-        let data={}; try{data=JSON.parse(raw)}catch(_){}
-        if(r.statusCode<200||r.statusCode>=300) return callback(new Error(data.error?.message||('AI provider returned HTTP '+r.statusCode)));
-        const content=data.choices?.[0]?.message?.content||''; let parsed;
-        try{parsed=JSON.parse(content)}catch(_){parsed={doctorHandoff:content}};
-        callback(null,{configured:true,summary:parsed,model});
-      });
+  const req = https.request({
+    hostname: u.hostname,
+    port: u.port || 443,
+    path: u.pathname + (u.search || ''),
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + apiKey,
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload)
+    }
+  }, r => {
+    let raw = '';
+    r.on('data', c => raw += c);
+    r.on('end', () => {
+      let data = {};
+      try { data = JSON.parse(raw); } catch (_) {}
+      if (r.statusCode < 200 || r.statusCode >= 300) {
+        return callback(new Error(data.error?.message || ('AI provider returned HTTP ' + r.statusCode)));
+      }
+      const content = data.choices?.[0]?.message?.content || '';
+      let parsed;
+      try { parsed = JSON.parse(content); }
+      catch (_) { parsed = {doctorHandoff: content}; }
+      callback(null, {configured:true, model, summary:parsed});
     });
-  req.on('error',err=>callback(err)); req.write(payload); req.end();
+  });
+  req.on('error', err => callback(err));
+  req.write(payload);
+  req.end();
 }
 
-app.post('/api/ai/summarize-history', (req,res)=>{
-  try {
-    callAIProvider(buildAISummaryPrompt(req.body||{}),(err,result)=>{
-      if(err) return res.status(502).json({error:err.message});
-      res.json(result);
+app.post('/api/doctors/patient/:id/ai-summary', auth, role('doctor'), (req,res) => {
+  const patient = db.prepare(`
+    SELECT p.*, q.queue_no, q.department, q.status
+    FROM patients p
+    JOIN queue q ON q.patient_id=p.id
+    WHERE p.id=? AND q.assigned_doctor_id=?
+    ORDER BY q.id DESC LIMIT 1
+  `).get(req.params.id, req.user.id);
+
+  if (!patient) return res.status(404).json({error:'Patient not assigned to you'});
+
+  const fallback = localSummary(patient);
+  callAIProvider(buildAISummaryPrompt(patient), (err, result) => {
+    if (err) {
+      return res.status(502).json({
+        error: err.message,
+        configured: true,
+        summary: fallback,
+        fallback: true
+      });
+    }
+
+    if (!result.configured) {
+      return res.json({
+        configured:false,
+        summary:fallback,
+        fallback:true,
+        message:result.message
+      });
+    }
+
+    const summaryText = JSON.stringify(result.summary);
+    try {
+      db.prepare('UPDATE patients SET ai_summary=? WHERE id=?').run(summaryText, patient.id);
+    } catch (_) {}
+
+    res.json({
+      configured:true,
+      summary:result.summary,
+      model:result.model,
+      saved:true
     });
-  } catch(e) { res.status(400).json({error:e.message||'Invalid AI summary request'}); }
+  });
 });
+
+app.get('*',(req,res)=>res.sendFile(path.join(ROOT,'index.html')));
+app.use((err,req,res,next)=>{console.error(err);res.status(400).json({error:err.message||'Request failed'});});
+app.listen(PORT,()=>console.log(`MediKiosk running at http://localhost:${PORT}`));
