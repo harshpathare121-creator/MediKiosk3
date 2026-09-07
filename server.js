@@ -50,11 +50,13 @@ app.post('/api/login',(req,res)=>{
 app.get('/api/departments',(req,res)=>res.json(db.prepare("SELECT id,name,department FROM users WHERE role='doctor' ORDER BY department,name").all().map(x=>({id:x.id,name:x.department,doctor:x.name}))));
 
 app.post('/api/patients', upload.array('documents',5), (req,res)=>{
- const {name,contact,email,preferredTime,history,department,privacyHistory,currentIssue,adaptiveQuestionnaire}=req.body||{};
+ const {name,contact,email,preferredTime,history,previousHistory,department,privacyHistory,currentIssue,adaptiveQuestionnaire}=req.body||{};
+ const cleanHistory=typeof previousHistory==='string' ? previousHistory.trim() : (typeof history==='string' ? history.trim() : '');
+ const cleanCurrentIssue=typeof currentIssue==='string' ? currentIssue.trim() : '';
  if(!name?.trim() || !validContact(contact) || !validEmail(email) || !department) return res.status(400).json({error:'Name, valid 10-digit contact and department are required. Email is optional but must be valid when entered.'});
  const date=today(), stamp=now();
  const tx=db.transaction(()=>{
-  const p=db.prepare(`INSERT INTO patients(name,contact,email,preferred_time,history,current_issue,adaptive_questionnaire,created_at,created_date,privacy_history) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(name.trim(),contact,email?.trim()||null,preferredTime||null,history?.trim()||null,currentIssue?.trim()||null,adaptiveQuestionnaire||null,stamp,date,privacyHistory==='0'?0:1);
+  const p=db.prepare(`INSERT INTO patients(name,contact,email,preferred_time,history,current_issue,adaptive_questionnaire,created_at,created_date,privacy_history) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(name.trim(),contact,email?.trim()||null,preferredTime||null,cleanHistory||null,cleanCurrentIssue||null,adaptiveQuestionnaire||null,stamp,date,privacyHistory==='0'?0:1);
   const doc=db.prepare("SELECT id,department FROM users WHERE role='doctor' AND department=? ORDER BY id LIMIT 1").get(department);
   const count=db.prepare('SELECT COUNT(*) c FROM queue WHERE queue_date=? AND department=?').get(date,department).c+1;
   const prefix=department.split(/\s+/).map(x=>x[0]).join('').slice(0,3).toUpperCase() || 'OPD';
