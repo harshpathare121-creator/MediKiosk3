@@ -1,0 +1,20 @@
+MediKiosk AI Summary API
+
+UI is unchanged. Added ai-summary.js and POST /api/ai/summarize-history.
+
+Request JSON:
+{
+  "previousHistory": "...",
+  "currentIssue": "...",
+  "adaptiveQuestionnaire": "...",
+  "patientContext": {}
+}
+
+Server environment variables:
+AI_API_KEY=your_provider_key
+AI_MODEL=gpt-4o-mini
+AI_API_BASE_URL=https://api.openai.com
+
+The browser must never contain a real provider secret. Keep the API key on the server.
+The endpoint is designed for documentation summarization, not diagnosis or prescribing.
+For real medical deployment, add consent, HTTPS, access controls, audit logging, encryption, retention rules and applicable Indian privacy/health-data compliance.
